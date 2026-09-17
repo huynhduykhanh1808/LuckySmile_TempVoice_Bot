@@ -2,6 +2,7 @@ import os
 import sqlite3
 import logging
 from typing import Optional
+from aiohttp import web
 
 import discord
 from discord import app_commands
@@ -30,6 +31,22 @@ intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 intents.voice_states = True
+
+# -----------------------------
+# Web Server (Giữ bot không bị sleep)
+# -----------------------------
+async def handle(request):
+    return web.Response(text="Bot is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    log.info(f"Web server đã chạy trên cổng {port}")
 
 # -----------------------------
 # Database Management
@@ -346,7 +363,9 @@ class TempVoiceBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(VoiceControlView())
         await self.tree.sync()
-        log.info("Đã đồng bộ Slash Commands & Permanent Views!")
+        # Khởi động web server ngầm để chống sleep trên Railway
+        self.loop.create_task(start_web_server())
+        log.info("Đã đồng bộ Slash Commands, Permanent Views & Web Server!")
 
 bot = TempVoiceBot()
 
