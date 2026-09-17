@@ -19,7 +19,7 @@ ROOM_PREFIX = os.getenv("ROOM_PREFIX", "🔊")
 DELETE_EMPTY = os.getenv("DELETE_EMPTY", "true").lower() == "true"
 
 if not TOKEN:
-    raise RuntimeError("Chưa có DISCORD_TOKEN trong file .env")
+    raise RuntimeError("Chưa có DISCORD_TOKEN trong biến môi trường Environment Variables!")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,7 +73,7 @@ def get_generator(guild_id: int):
     return row
 
 
-def save_generator(guild_id, category_id, generator_id, control_channel_id):
+def save_generator(guild_id: int, category_id: int, generator_id: int, control_channel_id: Optional[int]):
     con = db()
     con.execute("""
         INSERT INTO generators(guild_id, category_id, generator_id, control_channel_id)
@@ -126,17 +126,60 @@ def all_rooms():
 
 
 async def delete_temp_room(channel: discord.VoiceChannel):
-    """Hàm phụ trợ hỗ trợ xóa phòng và xóa record trong DB"""
+    """Xóa phòng thoại tạm khỏi Discord và CSDL"""
     try:
         delete_room_record(channel.id)
-        await channel.delete(reason="Lucky Smile TempVoice: Xóa phòng tạm")
+        await channel.delete(reason="Lucky Smile TempVoice: Phòng trống hoặc bị xóa")
     except discord.HTTPException as e:
         log.error(f"Lỗi khi xóa kênh {channel.id}: {e}")
 
 
 # -----------------------------
-# Helper logic
+# Helpers & Setup
 # -----------------------------
+async def ensure_setup(guild: discord.Guild):
+    row = get_generator(guild.id)
+    category = None
+    generator = None
+    control = None
+
+    if row:
+        category = guild.get_channel(row["category_id"])
+        generator = guild.get_channel(row["generator_id"])
+        control = guild.get_channel(row["control_channel_id"]) if row["control_channel_id"] else None
+
+    if not isinstance(category, discord.CategoryChannel):
+        category = discord.utils.get(guild.categories, name=DEFAULT_CATEGORY)
+        if category is None:
+            category = await guild.create_category(DEFAULT_CATEGORY, reason="Lucky Smile TempVoice setup")
+
+    if not isinstance(generator, discord.VoiceChannel):
+        generator = discord.utils.get(guild.voice_channels, name=DEFAULT_GENERATOR)
+        if generator is None:
+            generator = await guild.create_voice_channel(
+                DEFAULT_GENERATOR,
+                category=category,
+                reason="Lucky Smile TempVoice generator"
+            )
+
+    if not isinstance(control, discord.TextChannel):
+        control = discord.utils.get(guild.text_channels, name=DEFAULT_CONTROL)
+        if control is None:
+            control = await guild.create_text_channel(
+                DEFAULT_CONTROL,
+                category=category,
+                reason="Lucky Smile TempVoice control panel"
+            )
+
+    try:
+        await generator.edit(position=0)
+    except discord.HTTPException:
+        pass
+
+    save_generator(guild.id, category.id, generator.id, control.id if control else None)
+    return category, generator, control
+
+
 async def is_admin_or_owner(interaction: discord.Interaction, channel: discord.VoiceChannel):
     if not interaction.guild:
         return False
@@ -155,7 +198,7 @@ def room_for_member(member: discord.Member) -> Optional[discord.VoiceChannel]:
 
 
 # -----------------------------
-# Modals & Menus
+# UI Modals & Views
 # -----------------------------
 class LimitModal(discord.ui.Modal, title="Cài đặt giới hạn người dùng"):
     limit = discord.ui.TextInput(
@@ -169,7 +212,7 @@ class LimitModal(discord.ui.Modal, title="Cài đặt giới hạn người dùn
     async def on_submit(self, interaction: discord.Interaction):
         if not interaction.user.voice or not interaction.user.voice.channel:
             return await interaction.response.send_message("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
-        
+
         try:
             val = int(self.limit.value)
             if val < 0 or val > 99:
@@ -217,10 +260,10 @@ class RegionSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         if not interaction.user.voice or not interaction.user.voice.channel:
             return await interaction.response.send_message("❌ Bạn phải đang ở trong phòng thoại tạm của mình!", ephemeral=True)
-        
+
         channel = interaction.user.voice.channel
         region_val = None if self.values[0] == "auto" else self.values[0]
-        
+
         try:
             await channel.edit(rtc_region=region_val)
             region_name = "Tự động" if self.values[0] == "auto" else self.values[0].upper()
@@ -280,7 +323,7 @@ class VoiceControlView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         if not interaction.user.voice or not interaction.user.voice.channel:
             return await interaction.followup.send("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
-        
+
         channel = interaction.user.voice.channel
         overwrite = channel.overwrites_for(interaction.guild.default_role)
         overwrite.view_channel = None
@@ -326,7 +369,7 @@ class VoiceControlView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         if not interaction.user.voice or not interaction.user.voice.channel:
             return await interaction.followup.send("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
-        
+
         channel = interaction.user.voice.channel
         await channel.edit(name=f"{ROOM_PREFIX} Phòng của {interaction.user.display_name}", user_limit=0, rtc_region=None)
         await channel.set_permissions(interaction.guild.default_role, overwrite=None)
@@ -352,7 +395,7 @@ class VoiceControlView(discord.ui.View):
 async def room_allow(interaction: discord.Interaction, user: discord.Member):
     if not interaction.user.voice or not interaction.user.voice.channel:
         return await interaction.response.send_message("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
-    
+
     channel = interaction.user.voice.channel
     overwrite = channel.overwrites_for(user)
     overwrite.connect = True
@@ -360,26 +403,28 @@ async def room_allow(interaction: discord.Interaction, user: discord.Member):
     await channel.set_permissions(user, overwrite=overwrite)
     await interaction.response.send_message(f"✅ Đã cấp quyền cho {user.mention} vào phòng!", ephemeral=True)
 
+
 @bot.tree.command(name="room-deny", description="Cấm thành viên tham gia phòng thoại")
 async def room_deny(interaction: discord.Interaction, user: discord.Member):
     if not interaction.user.voice or not interaction.user.voice.channel:
         return await interaction.response.send_message("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
-    
+
     channel = interaction.user.voice.channel
     overwrite = channel.overwrites_for(user)
     overwrite.connect = False
     await channel.set_permissions(user, overwrite=overwrite)
-    
+
     if user.voice and user.voice.channel == channel:
         await user.move_to(None)
-        
+
     await interaction.response.send_message(f"🚫 Đã cấm {user.mention} vào phòng!", ephemeral=True)
+
 
 @bot.tree.command(name="room-kick", description="Đuổi thành viên ra khỏi phòng thoại")
 async def room_kick(interaction: discord.Interaction, user: discord.Member):
     if not interaction.user.voice or not interaction.user.voice.channel:
         return await interaction.response.send_message("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
-    
+
     channel = interaction.user.voice.channel
     if user.voice and user.voice.channel == channel:
         await user.move_to(None)
@@ -387,37 +432,39 @@ async def room_kick(interaction: discord.Interaction, user: discord.Member):
     else:
         await interaction.response.send_message(f"❌ Thành viên {user.mention} không có trong phòng của bạn!", ephemeral=True)
 
+
 @bot.tree.command(name="room-reset", description="Khôi phục cài đặt phòng về mặc định")
 async def room_reset(interaction: discord.Interaction):
     if not interaction.user.voice or not interaction.user.voice.channel:
         return await interaction.response.send_message("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
-    
+
     channel = interaction.user.voice.channel
     await channel.edit(name=f"{ROOM_PREFIX} Phòng của {interaction.user.display_name}", user_limit=0, rtc_region=None)
-    
+
     for target in list(channel.overwrites.keys()):
         if target != interaction.guild.default_role:
             await channel.set_permissions(target, overwrite=None)
-            
+
     await channel.set_permissions(interaction.guild.default_role, overwrite=None)
     await interaction.response.send_message("🖼️ Đã khôi phục (Reset) toàn bộ cài đặt phòng về mặc định!", ephemeral=True)
+
 
 @bot.tree.command(name="room-transfer", description="Chuyển quyền chủ phòng cho người khác")
 async def room_transfer(interaction: discord.Interaction, user: discord.Member):
     if not interaction.user.voice or not interaction.user.voice.channel:
         return await interaction.response.send_message("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
-    
+
     channel = interaction.user.voice.channel
     overwrite = channel.overwrites_for(user)
     overwrite.connect = True
     overwrite.manage_channels = True
     await channel.set_permissions(user, overwrite=overwrite)
-    
+
     con = db()
     con.execute("UPDATE rooms SET owner_id=? WHERE channel_id=?", (user.id, channel.id))
     con.commit()
     con.close()
-    
+
     await interaction.response.send_message(f"👑 Đã chuyển quyền quản lý phòng cho {user.mention}!", ephemeral=True)
 
 
@@ -425,8 +472,7 @@ async def room_transfer(interaction: discord.Interaction, user: discord.Member):
 # Dynamic Room Creation Logic
 # -----------------------------
 async def create_room(guild: discord.Guild, member: discord.Member):
-    row = get_generator(guild.id)
-    category = guild.get_channel(row["category_id"]) if row else None
+    category, generator, control = await ensure_setup(guild)
 
     existing = get_owned_room(guild.id, member.id)
     if existing:
@@ -480,7 +526,7 @@ async def on_ready():
 
     try:
         synced = await bot.tree.sync()
-        log.info("Đã sync %s slash commands.", len(synced))
+        log.info("Đã sync %s slash commands toàn cầu.", len(synced))
     except Exception:
         log.exception("Không sync được slash commands.")
 
@@ -499,23 +545,25 @@ async def on_guild_channel_delete(channel):
 
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    # 1. Tạo phòng khi người dùng vào kênh Generator
     if after.channel and isinstance(after.channel, discord.VoiceChannel):
         row = get_generator(member.guild.id)
+        if not row:
+            await ensure_setup(member.guild)
+            row = get_generator(member.guild.id)
+
         if row and after.channel.id == row["generator_id"]:
             await create_room(member.guild, member)
 
-    # 2. Xóa phòng khi không còn ai
     if before.channel and isinstance(before.channel, discord.VoiceChannel):
         row = get_generator(member.guild.id)
-        
+
         if row and before.channel.id == row["generator_id"]:
             return
 
         room = get_room(before.channel.id)
         if room and len(before.channel.members) == 0:
             await delete_temp_room(before.channel)
-        elif len(before.channel.members) == 0 and "room" in before.channel.name.lower():
+        elif len(before.channel.members) == 0 and "phòng" in before.channel.name.lower():
             await delete_temp_room(before.channel)
 
 
