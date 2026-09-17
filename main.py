@@ -15,7 +15,6 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 DB_PATH = os.getenv("DB_PATH", "tempvoice.db")
 DEFAULT_GENERATOR = os.getenv("GENERATOR_NAME", "➕・Tạo Phòng")
-DEFAULT_CONTROL = os.getenv("CONTROL_CHANNEL_NAME", "🎛️・quản-lý-phòng")
 FIXED_BLOG_NAME = os.getenv("BLOG_CHANNEL_NAME", "💬│blog-chat")
 ROOM_PREFIX = os.getenv("ROOM_PREFIX", "🔊")
 
@@ -65,7 +64,6 @@ def init_db():
             guild_id INTEGER PRIMARY KEY,
             category_id INTEGER NOT NULL,
             generator_id INTEGER NOT NULL,
-            control_channel_id INTEGER,
             blog_channel_id INTEGER
         )
     """)
@@ -90,17 +88,16 @@ def get_generator(guild_id: int):
     con.close()
     return row
 
-def save_generator(guild_id, category_id, generator_id, control_channel_id, blog_channel_id):
+def save_generator(guild_id, category_id, generator_id, blog_channel_id):
     con = db()
     con.execute("""
-        INSERT INTO generators(guild_id, category_id, generator_id, control_channel_id, blog_channel_id)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO generators(guild_id, category_id, generator_id, blog_channel_id)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(guild_id) DO UPDATE SET
             category_id=excluded.category_id,
             generator_id=excluded.generator_id,
-            control_channel_id=excluded.control_channel_id,
             blog_channel_id=excluded.blog_channel_id
-    """, (guild_id, category_id, generator_id, control_channel_id, blog_channel_id))
+    """, (guild_id, category_id, generator_id, blog_channel_id))
     con.commit()
     con.close()
 
@@ -397,7 +394,6 @@ class VoiceChatBot(commands.Bot):
 bot = VoiceChatBot()
 
 async def create_room(guild: discord.Guild, member: discord.Member, category: discord.CategoryChannel):
-    # Kiểm tra nếu user đã có phòng cũ, dọn dẹp hoặc cho di chuyển lại
     existing = get_owned_room(guild.id, member.id)
     if existing:
         old = guild.get_channel(existing["channel_id"])
@@ -415,7 +411,6 @@ async def create_room(guild: discord.Guild, member: discord.Member, category: di
                 pass
         delete_room_record(existing["channel_id"])
 
-    # Tạo phòng thoại mới chính xác nằm trong danh mục của nút tạo phòng vừa bấm
     new_channel = await guild.create_voice_channel(
         name=f"{ROOM_PREFIX} Phòng của {member.display_name}",
         category=category
@@ -424,7 +419,6 @@ async def create_room(guild: discord.Guild, member: discord.Member, category: di
     await member.move_to(new_channel)
     save_room(guild.id, new_channel.id, member.id, category.id)
 
-    # Gửi log tạo phòng lên kênh blog tập trung
     await send_blog_log(
         guild,
         "✨ TẠO PHÒNG THOẠI MỚI",
@@ -454,14 +448,11 @@ async def on_ready():
 
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    # Cơ chế tự nhận diện phòng động dựa vào kênh tạo phòng mà người dùng vừa nhảy vào
     if after.channel and isinstance(after.channel, discord.VoiceChannel):
         generator_name = os.getenv("GENERATOR_NAME", "➕・Tạo Phòng")
-        # Kiểm tra nếu kênh user vừa vào có tên là nút tạo phòng và nằm trong một danh mục (Category)
         if after.channel.name == generator_name and after.channel.category:
             await create_room(member.guild, member, after.channel.category)
 
-    # Xử lý khi user rời khỏi phòng tạm (nếu phòng trống thì tự động xóa)
     if before.channel and isinstance(before.channel, discord.VoiceChannel):
         generator_name = os.getenv("GENERATOR_NAME", "➕・Tạo Phòng")
         if before.channel.name == generator_name:
@@ -501,11 +492,10 @@ async def on_message(message: discord.Message):
 # -----------------------------
 # Slash Commands
 # -----------------------------
-@bot.tree.command(name="setup", description="Khởi tạo kênh quản lý và Kênh Blog tập trung tại danh mục hiện tại của bạn")
+@bot.tree.command(name="setup", description="Khởi tạo kênh tạo phòng và Kênh Blog tập trung tại danh mục hiện tại")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_cmd(interaction: discord.Interaction):
     guild = interaction.guild
-    # Lấy tự động danh mục nơi admin đang đứng gọi lệnh hoặc tạo sẵn
     if interaction.channel and interaction.channel.category:
         category = interaction.channel.category
     else:
@@ -518,10 +508,6 @@ async def setup_cmd(interaction: discord.Interaction):
     if not generator:
         generator = await guild.create_voice_channel(DEFAULT_GENERATOR, category=category)
 
-    control = discord.utils.get(category.text_channels, name=DEFAULT_CONTROL)
-    if not control:
-        control = await guild.create_text_channel(DEFAULT_CONTROL, category=category)
-
     blog_channel = discord.utils.get(category.text_channels, name=FIXED_BLOG_NAME)
     if not blog_channel:
         blog_channel = await guild.create_text_channel(
@@ -530,7 +516,7 @@ async def setup_cmd(interaction: discord.Interaction):
             topic="Kênh nhật ký blog tập trung ghi nhận toàn bộ hoạt động tạo/xóa phòng và nội dung chat phục vụ kiểm duyệt."
         )
 
-    save_generator(guild.id, category.id, generator.id, control.id, blog_channel.id)
+    save_generator(guild.id, category.id, generator.id, blog_channel.id)
     
     await send_blog_log(
         guild,
@@ -539,7 +525,7 @@ async def setup_cmd(interaction: discord.Interaction):
         discord.Color.teal()
     )
     
-    await interaction.response.send_message(f"✅ Khởi tạo hệ thống Voice Chat & Kênh Blog tập trung thành công trong danh mục **{category.name}**!", ephemeral=True)
+    await interaction.response.send_message(f"✅ Khởi tạo nút tạo phòng và kênh Blog tập trung (`{FIXED_BLOG_NAME}`) thành công trong danh mục **{category.name}**!", ephemeral=True)
 
 @bot.tree.command(name="room-allow", description="Cho phép thành viên tham gia phòng thoại")
 async def room_allow(interaction: discord.Interaction, user: discord.Member):
