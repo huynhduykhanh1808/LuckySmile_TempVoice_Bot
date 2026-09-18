@@ -358,7 +358,7 @@ async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
     
-    # 1. Log tin nhắn phòng thoại tạm
+    # 1. Ghi lại nhật ký từ các phòng thoại tạm (Temp Voice Channels)
     room = get_room(message.channel.id)
     if room:
         await send_blog_log(
@@ -457,7 +457,7 @@ async def room_deny(interaction: discord.Interaction, user: discord.Member):
     if user.voice and user.voice.channel == channel: await user.move_to(None)
     await interaction.response.send_message(f"🚫 Đã cấm {user.mention}.", ephemeral=True)
 
-@bot.tree.command(name="room-kick", description="[Chủ phòng] Đuổi thành viên ra khỏi phòng thoại")
+@bot.tree.command(name="room-room-kick", description="[Chủ phòng] Đuổi thành viên ra khỏi phòng thoại")
 async def room_kick(interaction: discord.Interaction, user: discord.Member):
     if not interaction.user.voice or not interaction.user.voice.channel:
         return await interaction.response.send_message("❌ Bạn phải đang ở trong phòng thoại tạm!", ephemeral=True)
