@@ -1,7 +1,6 @@
 import os
 import sqlite3
 import logging
-from datetime import datetime
 from aiohttp import web
 
 import discord
@@ -141,16 +140,18 @@ def delete_room_record(channel_id: int):
     con.commit()
     con.close()
 
-# Gửi log dạng dòng đơn nhỏ gọn, tinh tế
+# Gửi log tối giản, dùng timestamp chuẩn Discord và bọc trong dấu ` đầu cuối
 async def send_blog_log(guild: discord.Guild, tag: str, content: str):
     try:
         gen = get_generator(guild.id)
         if gen and gen["blog_channel_id"]:
             blog_ch = guild.get_channel(gen["blog_channel_id"])
             if blog_ch:
-                time_str = datetime.now().strftime("%H:%M")
+                # Sử dụng thời gian chuẩn của Discord (discord.utils.utcnow)
+                discord_time = discord.utils.utcnow()
+                timestamp_str = f"<t:{int(discord_time.timestamp())}:t>"
                 clean_content = content.replace("\n", " ")
-                msg = f"`{time_str}` | **{tag}** › {clean_content}"
+                msg = f"`[{tag}]` {timestamp_str} - {clean_content}"
                 await blog_ch.send(msg)
     except Exception as e:
         log.error(f"Không thể gửi blog log: {e}")
@@ -334,7 +335,6 @@ async def create_room(guild: discord.Guild, member: discord.Member, category: di
 @bot.event
 async def on_ready():
     init_db()
-    # Đổi tên hiển thị / hoạt động của bot thành "Voice chat"
     await bot.change_presence(activity=discord.Game(name="Voice chat"))
     log.info("Đăng nhập thành công bot: %s", bot.user)
 
