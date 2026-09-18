@@ -114,22 +114,6 @@ def clear_tracked_channel(guild_id: int):
     con.commit()
     con.close()
 
-def set_blog_channel(guild_id: int, blog_channel_id: int):
-    con = db()
-    con.execute("""
-        INSERT INTO generators(guild_id, category_id, generator_id, blog_channel_id)
-        VALUES (?, 0, 0, ?)
-        ON CONFLICT(guild_id) DO UPDATE SET blog_channel_id=excluded.blog_channel_id
-    """, (guild_id, blog_channel_id))
-    con.commit()
-    con.close()
-
-def remove_blog_channel(guild_id: int):
-    con = db()
-    con.execute("UPDATE generators SET blog_channel_id = NULL WHERE guild_id = ?", (guild_id,))
-    con.commit()
-    con.close()
-
 def save_room(guild_id, channel_id, owner_id, category_id):
     con = db()
     con.execute("""
@@ -443,18 +427,6 @@ async def untrack_channel_cmd(interaction: discord.Interaction):
     clear_tracked_channel(guild.id)
     await interaction.response.send_message("✅ Đã hủy theo dõi kênh chat thành công!", ephemeral=True)
 
-@bot.tree.command(name="blog-add", description="[Admin] Đăng ký kênh hiện tại làm kênh nhận thông báo blog")
-@app_commands.checks.has_permissions(administrator=True)
-async def blog_add(interaction: discord.Interaction):
-    set_blog_channel(interaction.guild.id, interaction.channel.id)
-    await interaction.response.send_message(f"✅ Đã đăng ký kênh {interaction.channel.mention} làm kênh nhận thông báo blog!", ephemeral=True)
-
-@bot.tree.command(name="blog-remove", description="[Admin] Hủy theo dõi kênh thông báo blog của server")
-@app_commands.checks.has_permissions(administrator=True)
-async def blog_remove(interaction: discord.Interaction):
-    remove_blog_channel(interaction.guild.id)
-    await interaction.response.send_message("📴 Đã hủy đăng ký nhận thông báo blog!", ephemeral=True)
-
 
 # Lệnh Quản Lý Phòng: CHỈ DÀNH CHO CHỦ SỞ HỮU (OWNER) CỦA PHÒNG THOẠI
 @bot.tree.command(name="room-allow", description="[Chủ phòng] Cho phép thành viên tham gia phòng thoại")
@@ -502,8 +474,6 @@ async def room_kick(interaction: discord.Interaction, user: discord.Member):
 @setup_cmd.error
 @track_channel_cmd.error
 @untrack_channel_cmd.error
-@blog_add.error
-@blog_remove.error
 async def admin_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message("❌ Bạn không có quyền sử dụng lệnh này (Yêu cầu quyền Quản trị viên).", ephemeral=True)
