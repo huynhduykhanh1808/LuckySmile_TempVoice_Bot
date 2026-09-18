@@ -141,7 +141,7 @@ def delete_room_record(channel_id: int):
     con.commit()
     con.close()
 
-# Gửi log tập trung về kênh Blog (Tối ưu gọn gàng trong 1 dòng duy nhất)
+# Gửi log tập trung về kênh Blog
 async def send_blog_log(guild: discord.Guild, title: str, description: str, color: discord.Color):
     try:
         gen = get_generator(guild.id)
@@ -156,7 +156,7 @@ async def send_blog_log(guild: discord.Guild, title: str, description: str, colo
         log.error(f"Không thể gửi blog log: {e}")
 
 # -----------------------------
-# Modals & Views (Dành cho thành viên bấm nút điều khiển phòng)
+# Modals & Views (Điều khiển phòng)
 # -----------------------------
 class LimitModal(discord.ui.Modal, title="⚙️ Giới hạn số lượng thành viên"):
     limit = discord.ui.TextInput(label="Số lượng tối đa (0 = Không giới hạn)", placeholder="Nhập số từ 1 đến 99...", min_length=1, max_length=2, required=True)
@@ -381,10 +381,9 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 # -----------------------------
-# Slash Commands (Phân quyền chi tiết)
+# Slash Commands
 # -----------------------------
 
-# Lệnh dành riêng cho Quản trị viên (Admin)
 @bot.tree.command(name="setup", description="[Admin] Khởi tạo hệ thống phòng thoại và kênh blog tập trung")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_cmd(interaction: discord.Interaction):
@@ -425,10 +424,14 @@ async def track_channel_cmd(interaction: discord.Interaction):
 async def untrack_channel_cmd(interaction: discord.Interaction):
     guild = interaction.guild
     clear_tracked_channel(guild.id)
+    await send_blog_log(
+        guild,
+        "🗑️ ĐÃ HỦY THEO DÕI KÊNH",
+        f"Người hủy: {interaction.user.mention}",
+        discord.Color.orange()
+    )
     await interaction.response.send_message("✅ Đã hủy theo dõi kênh chat thành công!", ephemeral=True)
 
-
-# Lệnh Quản Lý Phòng: CHỈ DÀNH CHO CHỦ SỞ HỮU (OWNER) CỦA PHÒNG THOẠI
 @bot.tree.command(name="room-allow", description="[Chủ phòng] Cho phép thành viên tham gia phòng thoại")
 async def room_allow(interaction: discord.Interaction, user: discord.Member):
     if not interaction.user.voice or not interaction.user.voice.channel:
@@ -469,8 +472,6 @@ async def room_kick(interaction: discord.Interaction, user: discord.Member):
     else:
         await interaction.response.send_message(f"❌ Thành viên không ở trong phòng của bạn.", ephemeral=True)
 
-
-# Bắt lỗi khi người dùng không đủ quyền thực thi các lệnh Admin
 @setup_cmd.error
 @track_channel_cmd.error
 @untrack_channel_cmd.error
