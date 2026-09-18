@@ -141,17 +141,17 @@ def delete_room_record(channel_id: int):
     con.commit()
     con.close()
 
-# Gửi log tập trung về kênh Blog
-async def send_blog_log(guild: discord.Guild, title: str, description: str, color: discord.Color):
+# Gửi log dạng dòng đơn nhỏ gọn, tinh tế
+async def send_blog_log(guild: discord.Guild, tag: str, content: str):
     try:
         gen = get_generator(guild.id)
         if gen and gen["blog_channel_id"]:
             blog_ch = guild.get_channel(gen["blog_channel_id"])
             if blog_ch:
-                now_str = datetime.now().strftime("%H:%M:%S - %d/%m/%Y")
-                clean_desc = description.replace("\n", " | ")
-                one_line_msg = f"**[{title}]** • {clean_desc} • *({now_str})*"
-                await blog_ch.send(one_line_msg)
+                time_str = datetime.now().strftime("%H:%M")
+                clean_content = content.replace("\n", " ")
+                msg = f"`{time_str}` | **{tag}** › {clean_content}"
+                await blog_ch.send(msg)
     except Exception as e:
         log.error(f"Không thể gửi blog log: {e}")
 
@@ -182,7 +182,7 @@ class RenameModal(discord.ui.Modal, title="✏️ Đổi tên phòng thoại"):
         old_name = channel.name
         new_room_name = f"{ROOM_PREFIX} {self.new_name.value}"
         await channel.edit(name=new_room_name)
-        await send_blog_log(interaction.guild, "✏️ ĐỔI TÊN PHÒNG", f"Chủ phòng: {interaction.user.mention} | Cũ: `{old_name}` | Mới: `{new_room_name}`", discord.Color.gold())
+        await send_blog_log(interaction.guild, "ĐỔI TÊN", f"{interaction.user.mention} đổi `{old_name}` ➔ `{new_room_name}`")
         await interaction.response.send_message(f"✅ Đã đổi tên phòng thành: **{self.new_name.value}**", ephemeral=True)
 
 class TransferModal(discord.ui.Modal, title="👑 Chuyển quyền chủ phòng"):
@@ -200,7 +200,7 @@ class TransferModal(discord.ui.Modal, title="👑 Chuyển quyền chủ phòng"
         if not member or not member.voice or member.voice.channel.id != channel.id:
             return await interaction.response.send_message("❌ Thành viên phải đang ở trong phòng với bạn.", ephemeral=True)
         save_room(interaction.guild.id, channel.id, member.id, channel.category_id if channel.category else 0)
-        await send_blog_log(interaction.guild, "👑 CHUYỂN CHỦ PHÒNG", f"Phòng: {channel.mention} | Chủ mới: {member.mention}", discord.Color.blue())
+        await send_blog_log(interaction.guild, "CHUYỂN CHỦ", f"Phòng {channel.mention} chuyển quyền cho {member.mention}")
         await interaction.response.send_message(f"👑 Đã chuyển quyền chủ phòng cho {member.mention}.", ephemeral=True)
 
 class RegionSelect(discord.ui.Select):
@@ -288,7 +288,7 @@ class VoiceControlView(discord.ui.View):
         owner = interaction.guild.get_member(room["owner_id"])
         if owner and owner in channel.members: return await interaction.response.send_message("❌ Chủ cũ vẫn đang ở trong phòng!", ephemeral=True)
         save_room(interaction.guild.id, channel.id, interaction.user.id, channel.category_id if channel.category else 0)
-        await send_blog_log(interaction.guild, "👑 NHẬN CHỦ PHÒNG", f"Phòng: {channel.mention} | Chủ mới: {interaction.user.mention}", discord.Color.purple())
+        await send_blog_log(interaction.guild, "NHẬN CHỦ", f"{interaction.user.mention} tiếp quản phòng {channel.mention}")
         await interaction.response.send_message(f"👑 **{interaction.user.display_name}** đã tiếp quản quyền chủ phòng!", ephemeral=True)
 
     @discord.ui.button(label="Chuyển chủ", style=discord.ButtonStyle.secondary, emoji="📤", row=3, custom_id="vc_transfer")
@@ -316,7 +316,7 @@ async def create_room(guild: discord.Guild, member: discord.Member, category: di
         if isinstance(old, discord.VoiceChannel):
             try:
                 await member.move_to(old)
-                await send_blog_log(guild, "🔁 TÁI SỬ DỤNG PHÒNG", f"Thành viên: {member.mention} | Phòng: {old.mention}", discord.Color.dark_grey())
+                await send_blog_log(guild, "TÁI SỬ DỤNG", f"{member.mention} vào lại phòng {old.mention}")
                 return old
             except discord.HTTPException: pass
         delete_room_record(existing["channel_id"])
@@ -324,7 +324,7 @@ async def create_room(guild: discord.Guild, member: discord.Member, category: di
     new_channel = await guild.create_voice_channel(name=f"{ROOM_PREFIX} Phòng của {member.display_name}", category=category)
     await member.move_to(new_channel)
     save_room(guild.id, new_channel.id, member.id, category.id)
-    await send_blog_log(guild, "✨ TẠO PHÒNG MỚI", f"Chủ phòng: {member.mention} | Phòng: {new_channel.mention}", discord.Color.green())
+    await send_blog_log(guild, "TẠO PHÒNG", f"Chủ: {member.mention} ➔ {new_channel.mention}")
 
     embed = discord.Embed(title="🎛️ BẢNG ĐIỀU KHIỂN PHÒNG", description=f"Chủ phòng: {member.mention}\n\nDùng các nút bên dưới để tùy chỉnh không gian.", color=discord.Color.blurple())
     embed.set_thumbnail(url=member.display_avatar.url)
@@ -334,6 +334,8 @@ async def create_room(guild: discord.Guild, member: discord.Member, category: di
 @bot.event
 async def on_ready():
     init_db()
+    # Đổi tên hiển thị / hoạt động của bot thành "Voice chat"
+    await bot.change_presence(activity=discord.Game(name="Voice chat"))
     log.info("Đăng nhập thành công bot: %s", bot.user)
 
 @bot.event
@@ -350,7 +352,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             delete_room_record(rid)
             try:
                 await before.channel.delete()
-                await send_blog_log(member.guild, "🗑️ XÓA PHÒNG TRỐNG", f"Phòng: `{rname}`", discord.Color.red())
+                await send_blog_log(member.guild, "XÓA PHÒNG", f"Phòng trống `{rname}` đã bị xóa")
             except discord.HTTPException: pass
 
 @bot.event
@@ -358,25 +360,17 @@ async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
     
-    # 1. Log tin nhắn trong phòng thoại tạm (Temp Voice Channels)
+    # 1. Log chat trong phòng thoại tạm
     room = get_room(message.channel.id)
     if room:
-        await send_blog_log(
-            message.guild,
-            "💬 NHẬT KÝ PHÒNG TẠM",
-            f"Người gửi: {message.author.mention} | Phòng: {message.channel.mention} | Nội dung: {message.content or '[Tệp đính kèm]'}",
-            discord.Color.light_embed()
-        )
+        content_preview = message.content or "[Tệp đính kèm]"
+        await send_blog_log(message.guild, "CHAT PHÒNG", f"{message.author.mention} trong {message.channel.mention}: {content_preview}")
     
     # 2. Theo dõi thời gian thực kênh chat được gán bằng lệnh /track-channel
     gen = get_generator(message.guild.id)
     if gen and gen["tracked_text_channel_id"] and message.channel.id == gen["tracked_text_channel_id"]:
-        await send_blog_log(
-            message.guild,
-            "⚡ THEO DÕI KÊNH CHAT CHUNG",
-            f"Người gửi: {message.author.mention} | Kênh: {message.channel.mention} | Nội dung: {message.content or '[Tệp đính kèm]'}",
-            discord.Color.blue()
-        )
+        content_preview = message.content or "[Tệp đính kèm]"
+        await send_blog_log(message.guild, "THEO DÕI CHAT", f"{message.author.mention} tại {message.channel.mention}: {content_preview}")
 
     await bot.process_commands(message)
 
@@ -411,12 +405,7 @@ async def track_channel_cmd(interaction: discord.Interaction):
         return await interaction.response.send_message("❌ Lệnh này chỉ có thể sử dụng bên trong một kênh văn bản!", ephemeral=True)
 
     update_tracked_channel(guild.id, current_channel.id)
-    await send_blog_log(
-        guild,
-        "📌 ĐÃ GÁN KÊNH THEO DÕI MỚI",
-        f"Người gán: {interaction.user.mention} | Kênh theo dõi: {current_channel.mention}",
-        discord.Color.teal()
-    )
+    await send_blog_log(guild, "GÁN THEO DÕI", f"{interaction.user.mention} đã gán kênh {current_channel.mention}")
     await interaction.response.send_message(f"✅ Đã tự động nhận diện và gán kênh {current_channel.mention} vào hệ thống theo dõi thời gian thực!", ephemeral=True)
 
 @bot.tree.command(name="untrack-channel", description="[Admin] Hủy theo dõi và gỡ bỏ kênh chat đang được gán thời gian thực")
@@ -424,12 +413,7 @@ async def track_channel_cmd(interaction: discord.Interaction):
 async def untrack_channel_cmd(interaction: discord.Interaction):
     guild = interaction.guild
     clear_tracked_channel(guild.id)
-    await send_blog_log(
-        guild,
-        "🗑️ ĐÃ HỦY THEO DÕI KÊNH",
-        f"Người hủy: {interaction.user.mention}",
-        discord.Color.orange()
-    )
+    await send_blog_log(guild, "HỦY THEO DÕI", f"{interaction.user.mention} đã hủy theo dõi kênh")
     await interaction.response.send_message("✅ Đã hủy theo dõi kênh chat thành công!", ephemeral=True)
 
 @bot.tree.command(name="room-allow", description="[Chủ phòng] Cho phép thành viên tham gia phòng thoại")
